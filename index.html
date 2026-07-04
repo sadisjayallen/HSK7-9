@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HSK 7–9 Vocabulary Quiz</title>
+  <script src="vocab.js"></script>
+  <style>
+    :root { color-scheme: light dark; --accent:#3467d6; --good:#17803d; --bad:#b3261e; }
+    body { font-family: system-ui, -apple-system, Segoe UI, sans-serif; margin: 0; background:#f6f7fb; color:#15171a; }
+    main { max-width: 980px; margin: 0 auto; padding: 24px; }
+    .card { background: white; border-radius: 18px; box-shadow: 0 8px 30px #0001; padding: 22px; margin: 16px 0; }
+    h1 { margin: 0 0 6px; }
+    .muted { color:#5f6673; }
+    .row { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
+    button, select, input { font: inherit; border-radius: 10px; border:1px solid #c9ced8; padding:10px 12px; }
+    button { background: var(--accent); color:white; border:0; cursor:pointer; }
+    button.secondary { background:#e8ebf2; color:#222; }
+    button.ghost { background:transparent; color:var(--accent); border:1px solid #b9c5e8; }
+    .prompt { font-size: clamp(30px, 6vw, 62px); text-align:center; padding:30px 10px; line-height:1.15; }
+    .prompt.english { font-size: clamp(24px, 4vw, 42px); }
+    .answer { font-size: 24px; text-align:center; line-height:1.5; }
+    .options { display:grid; grid-template-columns: repeat(auto-fit, minmax(210px,1fr)); gap:12px; }
+    .options button { background:#f2f5fc; color:#111; border:1px solid #dbe2f3; text-align:left; }
+    .options button.correct { background:#dff4e7; border-color:#80c997; }
+    .options button.wrong { background:#fde7e7; border-color:#e19a9a; }
+    #typed { width:100%; box-sizing:border-box; font-size:22px; }
+    .stats { display:grid; grid-template-columns: repeat(auto-fit, minmax(140px,1fr)); gap:10px; }
+    .stat { background:#f2f5fc; border-radius:12px; padding:12px; }
+    .big { font-size:28px; font-weight:700; }
+    table { width:100%; border-collapse:collapse; }
+    td, th { padding:8px 10px; border-bottom:1px solid #e4e7ee; text-align:left; }
+    .small { font-size: 14px; }
+    @media (prefers-color-scheme: dark) {
+      body { background:#111318; color:#f3f5f7; }
+      .card { background:#1b1f29; }
+      .muted { color:#aeb6c5; }
+      button.secondary, .options button, .stat { background:#252b38; color:#f3f5f7; border-color:#3b4354; }
+      input, select { background:#151922; color:#f3f5f7; border-color:#3b4354; }
+      td, th { border-color:#333a48; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <div class="card">
+    <h1>HSK 7–9 Vocabulary Quiz</h1>
+    <p class="muted">Static GitHub Pages quiz with <span id="count"></span> entries: simplified Chinese, pinyin, and English.</p>
+    <div class="row">
+      <label>Mode
+        <select id="mode">
+          <option value="en_to_hz">English → Hanzi</option>
+          <option value="hz_to_en">Hanzi → English</option>
+          <option value="hz_to_py">Hanzi → Pinyin</option>
+          <option value="py_to_hz">Pinyin → Hanzi</option>
+        </select>
+      </label>
+      <label>Question type
+        <select id="qtype">
+          <option value="multiple">Multiple choice</option>
+          <option value="typed">Typed answer</option>
+        </select>
+      </label>
+      <label>Range
+        <select id="range"></select>
+      </label>
+      <button onclick="newQuestion()">New question</button>
+      <button class="secondary" onclick="resetStats()">Reset stats</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div id="prompt" class="prompt"></div>
+    <div id="typedBox" style="display:none">
+      <input id="typed" autocomplete="off" placeholder="Type your answer">
+      <div class="row" style="margin-top:12px">
+        <button onclick="checkTyped()">Check</button>
+        <button class="ghost" onclick="reveal()">Reveal</button>
+      </div>
+    </div>
+    <div id="choices" class="options"></div>
+    <div id="result" class="answer"></div>
+  </div>
+
+  <div class="card stats">
+    <div class="stat"><div class="muted">Correct</div><div id="correct" class="big">0</div></div>
+    <div class="stat"><div class="muted">Attempted</div><div id="attempted" class="big">0</div></div>
+    <div class="stat"><div class="muted">Accuracy</div><div id="accuracy" class="big">0%</div></div>
+    <div class="stat"><div class="muted">Streak</div><div id="streak" class="big">0</div></div>
+  </div>
+
+  <div class="card">
+    <h2>Search</h2>
+    <input id="search" placeholder="Search Hanzi, pinyin, or English" oninput="doSearch()" style="width:100%; box-sizing:border-box;">
+    <div id="searchResults" class="small"></div>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let current = null;
+let answered = false;
+let stats = JSON.parse(localStorage.getItem("hsk79stats") || '{"correct":0,"attempted":0,"streak":0}');
+$("count").textContent = VOCAB.length.toLocaleString();
+
+function ranges() {
+  const sel = $("range");
+  sel.innerHTML = '<option value="all">All entries</option>';
+  const step = 250;
+  for (let i=0; i<VOCAB.length; i+=step) {
+    const end = Math.min(i+step, VOCAB.length);
+    sel.innerHTML += `<option value="${i}-${end}">${i+1}–${end}</option>`;
+  }
+}
+ranges();
+
+function pool() {
+  const v = $("range").value;
+  if (v === "all") return VOCAB;
+  const [a,b] = v.split("-").map(Number);
+  return VOCAB.slice(a,b);
+}
+
+function fields(mode) {
+  if (mode === "en_to_hz") return ["english", "hanzi"];
+  if (mode === "hz_to_en") return ["hanzi", "english"];
+  if (mode === "hz_to_py") return ["hanzi", "pinyin"];
+  if (mode === "py_to_hz") return ["pinyin", "hanzi"];
+}
+
+function newQuestion() {
+  const p = pool();
+  current = p[Math.floor(Math.random()*p.length)];
+  answered = false;
+  const [q,a] = fields($("mode").value);
+  $("prompt").textContent = current[q];
+  $("prompt").className = "prompt" + (q === "english" ? " english" : "");
+  $("result").textContent = "";
+  $("typed").value = "";
+  $("typedBox").style.display = $("qtype").value === "typed" ? "block" : "none";
+  $("choices").style.display = $("qtype").value === "multiple" ? "grid" : "none";
+  $("choices").innerHTML = "";
+  if ($("qtype").value === "multiple") makeChoices(a);
+}
+
+function makeChoices(answerField) {
+  const p = pool();
+  const choices = [current[answerField]];
+  while (choices.length < 4) {
+    const c = p[Math.floor(Math.random()*p.length)][answerField];
+    if (c && !choices.includes(c)) choices.push(c);
+  }
+  choices.sort(() => Math.random() - .5);
+  for (const ch of choices) {
+    const b = document.createElement("button");
+    b.textContent = ch;
+    b.onclick = () => checkChoice(b, ch, answerField);
+    $("choices").appendChild(b);
+  }
+}
+
+function normalize(s) {
+  return (s || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function checkChoice(btn, choice, field) {
+  if (answered) return;
+  answered = true;
+  const ok = choice === current[field];
+  for (const b of $("choices").children) {
+    if (b.textContent === current[field]) b.classList.add("correct");
+  }
+  if (!ok) btn.classList.add("wrong");
+  finish(ok);
+}
+
+function checkTyped() {
+  if (answered) return;
+  const [,a] = fields($("mode").value);
+  const ok = normalize($("typed").value) === normalize(current[a]);
+  answered = true;
+  finish(ok);
+}
+
+function reveal() {
+  const [,a] = fields($("mode").value);
+  $("result").innerHTML = `Answer: <b>${current[a]}</b><br><span class="muted">${current.hanzi} · ${current.pinyin} · ${current.english}</span>`;
+}
+
+function finish(ok) {
+  stats.attempted++;
+  if (ok) { stats.correct++; stats.streak++; }
+  else { stats.streak = 0; }
+  localStorage.setItem("hsk79stats", JSON.stringify(stats));
+  const msg = ok ? "✓ Correct" : "✗ Not quite";
+  $("result").innerHTML = `${msg}<br><span class="muted">${current.hanzi} · ${current.pinyin} · ${current.english}</span>`;
+  renderStats();
+}
+
+function renderStats() {
+  $("correct").textContent = stats.correct;
+  $("attempted").textContent = stats.attempted;
+  $("accuracy").textContent = stats.attempted ? Math.round(100*stats.correct/stats.attempted)+"%" : "0%";
+  $("streak").textContent = stats.streak;
+}
+function resetStats(){ stats={correct:0,attempted:0,streak:0}; localStorage.setItem("hsk79stats", JSON.stringify(stats)); renderStats(); }
+
+function doSearch() {
+  const q = normalize($("search").value);
+  if (!q) { $("searchResults").innerHTML = ""; return; }
+  const hits = VOCAB.filter(v => normalize(v.hanzi).includes(q) || normalize(v.pinyin).includes(q) || normalize(v.english).includes(q)).slice(0,50);
+  $("searchResults").innerHTML = `<table><tr><th>Hanzi</th><th>Pinyin</th><th>English</th></tr>` +
+    hits.map(v => `<tr><td>${v.hanzi}</td><td>${v.pinyin}</td><td>${v.english}</td></tr>`).join("") + `</table>`;
+}
+
+$("mode").onchange = newQuestion;
+$("qtype").onchange = newQuestion;
+$("range").onchange = newQuestion;
+$("typed").addEventListener("keydown", e => { if (e.key === "Enter") checkTyped(); });
+renderStats();
+newQuestion();
+</script>
+</body>
+</html>
